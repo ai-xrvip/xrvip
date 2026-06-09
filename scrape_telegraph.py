@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-xchina.co 秀人网图集 → Telegra.ph + 频道封面
-图片上传至 imgbb 图床后嵌入 Telegraph，稳定可靠
-每天往前一页（起始 49），每图集前 30 张，末尾引导加入会员群
+xchina.co 秀人网图集 → Telegra.ph + 频道封面 (会员版)
+每运行一次连续更新 20 页，每套图集下载全部原图。
 """
 
 import requests
@@ -16,17 +15,17 @@ urllib3.disable_warnings()
 # ==================== 配置 ====================
 TOKEN             = os.getenv("TG_TOKEN")
 CHAT_ID           = os.getenv("TG_CHAT_ID")
+GROUP_ID          = os.getenv("TG_GROUP_ID")          # 可选，用于群组（本版暂不发送群组）
 TELEGRAPH_TOKEN   = os.getenv("TELEGRAPH_TOKEN", "").strip()
-VIP_LINK          = os.getenv("VIP_LINK", "https://t.me/xiuren88bot?start=lWXnjXFzdxP").strip()
-CF_COOKIE         = os.getenv("CF_COOKIE", "")
+CF_COOKIE         = os.getenv("CF_COOKIE", "")        # 绕过 Cloudflare 的 Cookie 字符串
 
 BASE_URL   = "https://xchina.co"
 SERIES_URL = "https://xchina.co/photos/series-5f1476781eab4/{page}.html"
-START_PAGE = 49
-PAGE_FILE  = "next_page.txt"
-SEEN_FILE  = "seen_xchina.json"
-MAX_IMAGES = 999
-TG_INTERVAL = 20
+START_PAGE = 49                     # 默认起始页，会从 next_page.txt 覆盖
+PAGES_PER_RUN = 10                  # 一次运行抓取 20 页
+PAGE_FILE  = "next_page.txt"    # 独立进度文件，避免与普通版冲突
+SEEN_FILE  = "seen_xchina.json" # 独立去重文件
+TG_INTERVAL = 5                     # 每套图集处理完后的休息秒数
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -168,19 +167,14 @@ def parse_album_detail(album_url):
             elif "fa-calendar-days" in classes:
                 info["date"] = text
 
-    # 处理 Vol. → No.
+    # 构建标题
     vol_raw = info["vol"].strip()
     if re.search(r'\d', vol_raw):
-        # 提取数字部分
         num_match = re.search(r'(\d+)', vol_raw)
-        if num_match:
-            vol_formatted = f"No.{num_match.group(1)}"
-        else:
-            vol_formatted = vol_raw.replace("Vol.", "No.")
+        vol_formatted = f"No.{num_match.group(1)}" if num_match else vol_raw.replace("Vol.", "No.")
     else:
         vol_formatted = vol_raw.replace("Vol.", "No.") if "Vol." in vol_raw else ""
 
-    # 构建标题
     series_clean = info["series"].strip() or "秀人网"
     if series_clean == "秀人网":
         series_clean = "Xiuren秀人网"
@@ -201,14 +195,15 @@ def parse_album_detail(album_url):
 
     return info, soup
 
-def get_image_urls_from_album(album_url, max_images=MAX_IMAGES):
+def get_image_urls_from_album(album_url):
+    """获取全部原图，无数量限制"""
     info, first_soup = parse_album_detail(album_url)
     if not info:
         info = {"title": "无标题", "model": "", "series": "秀人网", "vol": "", "date": ""}
 
     collected_urls = []
     page = 1
-    while len(collected_urls) < max_images:
+    while True:
         if page == 1:
             soup = first_soup
             if soup is None:
@@ -229,8 +224,6 @@ def get_image_urls_from_album(album_url, max_images=MAX_IMAGES):
             break
 
         for item in items:
-            if len(collected_urls) >= max_images:
-                break
             img_div = item.find("div", class_="img")
             if not img_div:
                 continue
@@ -252,10 +245,10 @@ def get_image_urls_from_album(album_url, max_images=MAX_IMAGES):
         page += 1
         time.sleep(0.5)
 
-    return collected_urls[:max_images], info
+    return collected_urls, info
 
 # ==================== 下载图片 ====================
-def download_image(url, referer, max_size_mb=5):
+def download_image(url, referer, max_size_mb=10):
     for attempt in range(3):
         try:
             r = SESSION.get(url, headers={"Referer": referer}, timeout=30)
@@ -276,7 +269,6 @@ def download_image(url, referer, max_size_mb=5):
 
 # ==================== imgbb 上传 ====================
 def upload_to_imgbb(image_data, image_type):
-    """上传图片到 imgbb（匿名），返回直链 URL"""
     ext = image_type.split("/")[-1].replace("jpeg", "jpg")
     image_data.seek(0)
     url = "https://imgbb.com/json"
@@ -309,16 +301,36 @@ def upload_to_imgbb(image_data, image_type):
     return None
 
 # ==================== Telegraph 页面创建 ====================
-def create_telegraph_page(title, image_urls, vip_link=None):
-    """使用 imgbb 直链创建 Telegraph 页面，末尾引导用醒目样式"""
+def create_telegraph_page(title, image_urls):
+    """创建 Telegraph 页面，无 VIP 引导"""
     if not TELEGRAPH_TOKEN:
         print("  ⚠️ 未配置 TELEGRAPH_TOKEN")
         return None
     if not image_urls:
         return None
+
+    content = [{"tag": "img", "attrs": {"src": url}} for url in image_urls]
+
+    data = {
+        "access_token": TELEGRAPH_TOKEN,
+        "title": title,
+        "author_name": "XiuRen VIP",
+        "content": content,
+        "return_content": False,
+    }
+    try:
+        r = requests.post("https://api.telegra.ph/createPage", json=data, timeout=30)
+        if r.status_code == 200:
+            result = r.json()
+            if result.get("ok") and "result" in result:
+                return result["result"]["url"]
+        print(f"    ❌ 创建页面失败: {r.text[:200]}")
+    except Exception as e:
+        print(f"    ❌ 创建异常: {e}")
+    return None
+
 # ==================== Telegram 发送封面 ====================
 def send_photo_to_channel(photo_data, photo_ctype, caption):
-    """发送封面到频道（文字不加粗）"""
     ext = photo_ctype.split("/")[-1].replace("jpeg", "jpg")
     photo_data.seek(0)
     r = requests.post(
@@ -337,99 +349,102 @@ def main():
     if not TOKEN or not CHAT_ID:
         print("❌ 缺少 TG_TOKEN / TG_CHAT_ID")
         sys.exit(1)
-
     if not TELEGRAPH_TOKEN:
         print("❌ 未配置 TELEGRAPH_TOKEN，无法创建 Telegraph 页面，退出")
         sys.exit(1)
 
-    print(f"✅ 会员群引导链接: {VIP_LINK}")
-    print(f"\n🚀 xchina 图集抓取 → Telegraph (via imgbb) + 频道")
+    print(f"🚀 xchina 会员版启动（一次更新 {PAGES_PER_RUN} 页，全量图片）")
     seen = load_seen()
     current_page = load_page()
-    print(f"📌 当前页码: {current_page}")
+    print(f"📌 当前起始页码: {current_page}")
 
     if current_page < 1:
         print("✅ 全部页码完成")
         return
 
-    albums = get_albums_from_list(current_page)
-    if not albums:
-        print("❌ 列表页无内容，退出")
-        sys.exit(1)
+    # 计算实际要抓的页数（可能不足 20 页）
+    end_page = max(current_page - PAGES_PER_RUN + 1, 1)
+    pages_to_fetch = current_page - end_page + 1
+    print(f"📚 将抓取第 {current_page} 页至第 {end_page} 页，共 {pages_to_fetch} 页")
 
-    albums.reverse()
-    new_albums = [a for a in albums if a["album_id"] not in seen]
-    print(f"🆕 新图集: {len(new_albums)}/{len(albums)}")
+    total_albums_processed = 0
 
-    if not new_albums:
-        print("本页已全部处理，翻到前一页")
-        save_page(current_page - 1)
-        return
-
-    for idx, album in enumerate(new_albums):
-        is_first = (idx == 0)
-        print(f"\n{'='*55}")
-        print(f"[{idx+1}/{len(new_albums)}] 开始处理 {album['url']}")
-
-        image_urls, info = get_image_urls_from_album(album["url"], MAX_IMAGES)
-        title = info.get("title", "无标题")
-        print(f"  📝 标题: {title}")
-
-        if not image_urls:
-            print("  ⚠️ 无图片，跳过")
-            seen.add(album["album_id"])
+    for page in range(current_page, end_page - 1, -1):
+        print(f"\n{'='*60}")
+        print(f"📖 处理第 {page} 页")
+        albums = get_albums_from_list(page)
+        if not albums:
+            print(f"⚠️ 第 {page} 页无内容，跳过")
             continue
 
-        if not is_first:
-            image_urls = image_urls[:MAX_IMAGES]
+        albums.reverse()  # 从底部开始
+        new_albums = [a for a in albums if a["album_id"] not in seen]
+        print(f"  新图集: {len(new_albums)}/{len(albums)}")
 
-        # 下载封面
-        print("  📥 下载封面...")
-        cover_data, cover_type = download_image(image_urls[0], referer=album["url"])
-        if not cover_data:
-            print("  ⚠️ 封面下载失败，跳过该图集")
-            continue
+        for idx, album in enumerate(new_albums):
+            print(f"\n  [{idx+1}/{len(new_albums)}] 处理 {album['url']}")
 
-        # 上传所有图片至 imgbb
-        print(f"  ☁️ 上传 {len(image_urls)} 张图片到 imgbb...")
-        imgbb_urls = []
-        for i, url in enumerate(image_urls):
-            data, ctype = download_image(url, referer=album["url"])
-            if not data:
-                print(f"    [{i+1}/{len(image_urls)}] 下载失败，跳过")
+            image_urls, info = get_image_urls_from_album(album["url"])
+            title = info.get("title", "无标题")
+            print(f"  📝 标题: {title}")
+
+            if not image_urls:
+                print("  ⚠️ 无图片，跳过")
+                seen.add(album["album_id"])
                 continue
-            img_url = upload_to_imgbb(data, ctype)
-            if img_url:
-                imgbb_urls.append(img_url)
-                print(f"    [{i+1}/{len(image_urls)}] 上传成功")
-            else:
-                print(f"    [{i+1}/{len(image_urls)}] 上传失败，跳过")
-            time.sleep(2.5)  # 遵守 imgbb 频率限制
 
-        if not imgbb_urls:
-            print("  ❌ 所有图片上传失败，跳过该图集")
-            continue
+            # 下载封面（第一张图）
+            print("  📥 下载封面...")
+            cover_data, cover_type = download_image(image_urls[0], referer=album["url"])
+            if not cover_data:
+                print("  ⚠️ 封面下载失败，跳过该图集")
+                continue
 
-        # 创建 Telegraph 页面
-        print("  📝 创建 Telegraph 页面...")
-        telegraph_url = create_telegraph_page(title, imgbb_urls, vip_link=VIP_LINK)
-        if not telegraph_url:
-            print("  ❌ 创建页面失败，跳过")
-            continue
-        print(f"  ✅ 页面: {telegraph_url}")
+            # 上传所有图片至 imgbb
+            print(f"  ☁️ 上传 {len(image_urls)} 张图片到 imgbb...")
+            imgbb_urls = []
+            for i, url in enumerate(image_urls):
+                data, ctype = download_image(url, referer=album["url"])
+                if not data:
+                    print(f"    [{i+1}/{len(image_urls)}] 下载失败，跳过")
+                    continue
+                img_url = upload_to_imgbb(data, ctype)
+                if img_url:
+                    imgbb_urls.append(img_url)
+                    print(f"    [{i+1}/{len(image_urls)}] 上传成功")
+                else:
+                    print(f"    [{i+1}/{len(image_urls)}] 上传失败，跳过")
+                time.sleep(2.5)
 
-        # 发送封面到频道
-        caption = f"{title}\n\n<a href=\"{telegraph_url}\">👉 点击观看图集</a>"
-        print("  📸 发送封面到频道...")
-        send_photo_to_channel(cover_data, cover_type, caption)
+            if not imgbb_urls:
+                print("  ❌ 所有图片上传失败，跳过该图集")
+                continue
 
-        seen.add(album["album_id"])
-        save_seen(seen)
-        time.sleep(TG_INTERVAL)
+            # 创建 Telegraph 页面
+            print("  📝 创建 Telegraph 页面...")
+            telegraph_url = create_telegraph_page(title, imgbb_urls)
+            if not telegraph_url:
+                print("  ❌ 创建页面失败，跳过")
+                continue
+            print(f"  ✅ 页面: {telegraph_url}")
 
-    next_page = current_page - 1
+            # 发送封面到频道
+            caption = f"{title}\n\n<a href=\"{telegraph_url}\">👉 点击观看图集</a>"
+            print("  📸 发送封面到频道...")
+            send_photo_to_channel(cover_data, cover_type, caption)
+
+            seen.add(album["album_id"])
+            save_seen(seen)
+            total_albums_processed += 1
+            time.sleep(TG_INTERVAL)
+
+        # 每页处理完后就更新进度，防止中断丢失
+        save_page(page - 1)
+
+    # 最终更新到 end_page - 1
+    next_page = end_page - 1 if end_page > 1 else 1
     save_page(next_page)
-    print(f"\n✅ 第{current_page}页完成，下次从第{next_page}页开始")
+    print(f"\n🎉 本次完成！共处理 {total_albums_processed} 套新图集，下次从第 {next_page} 页开始")
 
 if __name__ == "__main__":
     main()
