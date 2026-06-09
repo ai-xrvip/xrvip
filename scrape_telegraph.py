@@ -25,8 +25,8 @@ SERIES_URL = "https://xchina.co/photos/series-5f1476781eab4/{page}.html"
 START_PAGE = 49
 PAGE_FILE  = "next_page.txt"
 SEEN_FILE  = "seen_xchina.json"
-MAX_IMAGES = 30
-TG_INTERVAL = 5
+MAX_IMAGES = 999
+TG_INTERVAL = 20
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -316,41 +316,6 @@ def create_telegraph_page(title, image_urls, vip_link=None):
         return None
     if not image_urls:
         return None
-
-    content = [{"tag": "img", "attrs": {"src": url}} for url in image_urls]
-
-    if vip_link:
-        vip_node = {
-            "tag": "h3",                     # 二级标题，字体更大
-            "children": [
-                "🚀 查看完整版图集，点击 ",
-                {
-                    "tag": "a",
-                    "attrs": {"href": vip_link},
-                    "children": ["✨ 加入会员群 ✨"]
-                }
-            ]
-        }
-        content.append(vip_node)
-
-    data = {
-        "access_token": TELEGRAPH_TOKEN,
-        "title": title,
-        "author_name": "XiuRen Bot",
-        "content": content,
-        "return_content": False,
-    }
-    try:
-        r = requests.post("https://api.telegra.ph/createPage", json=data, timeout=30)
-        if r.status_code == 200:
-            result = r.json()
-            if result.get("ok") and "result" in result:
-                return result["result"]["url"]
-        print(f"    ❌ 创建页面失败: {r.text[:200]}")
-    except Exception as e:
-        print(f"    ❌ 创建异常: {e}")
-    return None
-
 # ==================== Telegram 发送封面 ====================
 def send_photo_to_channel(photo_data, photo_ctype, caption):
     """发送封面到频道（文字不加粗）"""
