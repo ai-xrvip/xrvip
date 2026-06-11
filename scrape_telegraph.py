@@ -21,8 +21,8 @@ CF_COOKIE         = os.getenv("CF_COOKIE", "")        # 绕过 Cloudflare 的 Co
 
 BASE_URL   = "https://xchina.co"
 SERIES_URL = "https://xchina.co/photos/series-5f1476781eab4/{page}.html"
-START_PAGE = 49                     # 默认起始页，会从 next_page.txt 覆盖
-PAGES_PER_RUN = 10                  # 一次运行抓取 20 页
+START_PAGE = 43                     # 默认起始页，会从 next_page.txt 覆盖
+PAGES_PER_RUN = 3                  # 一次运行抓取 20 页
 PAGE_FILE  = "next_page.txt"    # 独立进度文件，避免与普通版冲突
 SEEN_FILE  = "seen_xchina.json" # 独立去重文件
 TG_INTERVAL = 5                     # 每套图集处理完后的休息秒数
