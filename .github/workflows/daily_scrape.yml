@@ -5,6 +5,10 @@ on:
     - cron: "0 22 * * *"    # UTC 22:00 = 北京时间次日 6:00
   workflow_dispatch:
 
+concurrency:
+  group: xiurenvip-scrape   # 同名 group 同时只允许一个 job 运行
+  cancel-in-progress: false  # false = 新触发的等待；true = 新触发的直接取消旧的
+
 permissions:
   contents: write
 
