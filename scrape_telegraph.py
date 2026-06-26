@@ -20,7 +20,7 @@ TELEGRAPH_TOKEN   = os.getenv("TELEGRAPH_TOKEN", "").strip()
 CF_COOKIE         = os.getenv("CF_COOKIE", "")        # 绕过 Cloudflare 的 Cookie 字符串
 
 BASE_URL   = "https://xchina.co"
-SERIES_URL = "https://xchina.co/photos/series-5f1476781eab4/{page}.html"
+SERIES_URL = "https://xchina.co/photos/series-6660093348354/{page}.html"
 START_PAGE = 43                     # 默认起始页，会从 next_page.txt 覆盖
 PAGES_PER_RUN = 3                  # 一次运行抓取 20 页
 PAGE_FILE  = "next_page.txt"    # 独立进度文件，避免与普通版冲突
